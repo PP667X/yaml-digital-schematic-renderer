@@ -1,0 +1,246 @@
+# Assignment 2: signed fixed point, 15 bits / 5 fraction -> 30 bits / 10 fraction.
+# Functional blocks only. Contracts are explanatory metadata, not HDL.
+design:
+  name: Signed fixed-point 15-bit sequential multiplier
+  input_encoding: "A,B: signed 15-bit two's complement; value=signed15(code)/32. Range [-512,511.96875]."
+  output_encoding: "Y: signed 30-bit two's complement; value=signed30(code)/1024. Full exact product."
+  arithmetic: "a*b = sum(a*B[i]*2^i, i=0..13) - a*B[14]*2^14. All accumulator operations modulo 2^30."
+  precision: "No truncation, normalization, exponent, rounding or overflow flag. Every signed15 product fits signed30."
+  sync: "SYNC is a separate validity bit, captured with A and copied to OUT_SYNC on SAVE."
+  clock: "All sequential elements use rising CLK; active-high synchronous RESET has highest priority. No gated clocks."
+  external_inputs: [RA.A, RA.V, RB.B, CTRL.C, CTRL.R, CTRL.START]
+  external_outputs: [CTRL.BUSY, CTRL.READY, RY.Y, RY.V]
+  external_arrows: "Outward arrows on all external terminals. IN_/OUT_ defines logical direction."
+  internal_wiring: "All internal connections are continuous, including control, CLK and RESET. Dots are junctions; bridges are unconnected crossings."
+  states:
+    IDLE: "On START: CAP=1; capture A, B, SYNC at edge n; next INIT. Otherwise hold."
+    INIT: "INIT=1: RM=sign_extend(A,30), RQ=B, ACC=0, CNT=15; next RUN."
+    RUN: "STEP=1, EN_ACC=Q0, SUB=LAST. If Q0, ACC=ACC+RM except LAST: ACC=ACC-RM. Shift RM left, RQ logically right; decrement CNT. LAST before edge selects next WRITE, else RUN."
+    WRITE: "SAVE=1: capture ACC and saved SYNC into RY; next DONE."
+    DONE: "READY=1. Hold while START=1; return to IDLE on START=0. START during BUSY is ignored."
+  controller_outputs:
+    CAP: "state=IDLE and START"
+    INIT: "state=INIT"
+    STEP: "state=RUN"
+    EN_ACC: "state=RUN and Q0"
+    SUB: "state=RUN and LAST"
+    SAVE: "state=WRITE"
+    BUSY: "state in {INIT,RUN,WRITE}"
+    READY: "state=DONE"
+    COUT: "Direct copy of IN_CLK"
+    ROUT: "Direct copy of IN_RESET"
+  latency: "Capture n; initialize n+1; 15 RUN edges n+2..n+16; output and READY at n+17."
+
+canvas:
+  layout: grid
+  wiring: named
+  scale: 2
+  margin: 70
+  font_size: 20
+  small_font_size: 16
+  line_width: 2
+  pin_length: 24
+  pin_gap: 30
+  block_padding_y: 24
+  min_block_width: 230
+  min_block_height: 108
+  column_gap: 70
+  row_gap: 70
+
+blocks:
+  RA:
+    symbol: RG
+    label: "15 + VALID"
+    position: [0, 0]
+    contract: "RESET: Q=0, VALID=0; LD: Q=A15, VALID=V; otherwise hold. Total storage 16 bits."
+    widths: {A: 15, V: 1, LD: 1, C: 1, R: 1, Q: 15, VALID: 1}
+    inputs:
+      - {name: A, label: IN_A15}
+      - {name: V, label: IN_SYNC}
+      - LD
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: Q, label: "Q:s15"}
+      - VALID
+  RB:
+    symbol: RG
+    label: "15 bit"
+    position: [0, 1]
+    contract: "RESET: Q=0; LD: Q=B15; otherwise hold."
+    widths: {B: 15, LD: 1, C: 1, R: 1, Q: 15}
+    inputs:
+      - {name: B, label: IN_B15}
+      - LD
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: Q, label: "Q:s15"}
+  CTRL:
+    symbol: FSM
+    label: "5 states"
+    position: [0, 2]
+    contract: "Five-state controller specified in design.states. RESET -> IDLE. LAST selects subtraction on the 15th step, for the multiplier sign bit. COUT=C, ROUT=R are direct distribution outputs."
+    widths: {C: 1, R: 1, START: 1, LAST: 1, Q0: 1, CAP: 1, INIT: 1, STEP: 1, EN_ACC: 1, SUB: 1, SAVE: 1, COUT: 1, ROUT: 1, BUSY: 1, READY: 1}
+    inputs:
+      - {name: C, label: IN_CLK, marker: clock}
+      - {name: R, label: IN_RESET}
+      - {name: START, label: IN_START}
+      - LAST
+      - Q0
+    outputs:
+      - CAP
+      - INIT
+      - STEP
+      - {name: EN_ACC, label: ACC_EN}
+      - SUB
+      - SAVE
+      - {name: COUT, label: CLK}
+      - {name: ROUT, label: RST}
+      - {name: BUSY, label: OUT_BUSY, side: left, order: 5}
+      - {name: READY, label: OUT_READY, side: left, order: 6}
+  RM:
+    symbol: RG
+    label: "30 bit / <<1"
+    position: [1, 0]
+    contract: "Priority RESET > LD > SH > hold. LD: M=sign_extend(D15,30), replicating D[14] into bits 29:15. SH: M=(M<<1) modulo 2^30, zero fill."
+    widths: {D: 15, LD: 1, SH: 1, C: 1, R: 1, M: 30}
+    inputs:
+      - {name: D, label: "D:s15"}
+      - LD
+      - SH
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: M, label: "M:30"}
+  RQ:
+    symbol: RG
+    label: "15 bit / >>1"
+    position: [1, 1]
+    contract: "Priority RESET > LD > SH > hold. LD: Q=D15 raw two's-complement code. SH: Q=Q>>1 with ZERO fill. Q0 is current bit 0. After 14 shifts Q0 is the original sign bit B[14]."
+    widths: {D: 15, LD: 1, SH: 1, C: 1, R: 1, Q0: 1}
+    inputs:
+      - {name: D, label: "D:15"}
+      - LD
+      - SH
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs: [Q0]
+  CNT:
+    symbol: CT
+    label: "4 bit / -1"
+    position: [1, 2]
+    contract: "Priority RESET > LD15 > DEC > hold. LD15 loads constant 15. DEC subtracts one. LAST=(count=1), combinational before the final RUN edge."
+    widths: {LD15: 1, DEC: 1, C: 1, R: 1, LAST: 1}
+    inputs:
+      - LD15
+      - DEC
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs: [LAST]
+  SM_M:
+    symbol: SM
+    label: "30 bit / +/-"
+    position: [2, 0]
+    contract: "Combinational adder/subtractor: Q=(A+B) mod 2^30 when SUB=0, Q=(A-B) mod 2^30 when SUB=1. No external carry-in."
+    widths: {A: 30, B: 30, SUB: 1, Q: 30}
+    inputs:
+      - {name: A, label: "A:30"}
+      - {name: B, label: "B:30"}
+      - SUB
+    outputs:
+      - {name: Q, label: "Q:30"}
+  ACC:
+    symbol: RG
+    label: "30 bit"
+    position: [2, 1]
+    contract: "Priority RESET > CLR > EN > hold. CLR: P=0. EN: P=D30. After 15 RUN edges, P is the full signed product code."
+    widths: {D: 30, CLR: 1, EN: 1, C: 1, R: 1, P: 30}
+    inputs:
+      - {name: D, label: "D:30"}
+      - CLR
+      - EN
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: P, label: "P:s30"}
+  RY:
+    symbol: RG
+    label: "30 + VALID"
+    position: [3, 1]
+    contract: "RESET: Y=0, VALID=0. LD: Y=D30, VALID=VI. Hold otherwise. Total storage 31 bits; Y has 10 fractional bits."
+    widths: {D: 30, VI: 1, LD: 1, C: 1, R: 1, Y: 30, V: 1}
+    inputs:
+      - {name: D, label: "D:s30"}
+      - {name: VI, label: VALID}
+      - LD
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: Y, label: OUT_Y30}
+      - {name: V, label: OUT_SYNC}
+
+connections:
+  - RA.Q -> RM.D
+  - RB.Q -> RQ.D
+  - RA.VALID -> RY.VI
+  - RM.M -> SM_M.B
+  - ACC.P -> SM_M.A
+  - SM_M.Q -> ACC.D
+  - ACC.P -> RY.D
+  - RQ.Q0 -> CTRL.Q0
+  - CNT.LAST -> CTRL.LAST
+  - CTRL.SUB -> SM_M.SUB
+  - CTRL.CAP -> RA.LD
+  - CTRL.CAP -> RB.LD
+  - CTRL.INIT -> RM.LD
+  - CTRL.INIT -> RQ.LD
+  - CTRL.INIT -> ACC.CLR
+  - CTRL.INIT -> CNT.LD15
+  - CTRL.STEP -> RM.SH
+  - CTRL.STEP -> RQ.SH
+  - CTRL.STEP -> CNT.DEC
+  - CTRL.EN_ACC -> ACC.EN
+  - CTRL.SAVE -> RY.LD
+  - CTRL.COUT -> RA.C
+  - CTRL.COUT -> RB.C
+  - CTRL.COUT -> RM.C
+  - CTRL.COUT -> RQ.C
+  - CTRL.COUT -> ACC.C
+  - CTRL.COUT -> CNT.C
+  - CTRL.COUT -> RY.C
+  - CTRL.ROUT -> RA.R
+  - CTRL.ROUT -> RB.R
+  - CTRL.ROUT -> RM.R
+  - CTRL.ROUT -> RQ.R
+  - CTRL.ROUT -> ACC.R
+  - CTRL.ROUT -> CNT.R
+  - CTRL.ROUT -> RY.R
+
+net_names:
+  RA.A: IN_A15
+  RA.V: IN_SYNC
+  RB.B: IN_B15
+  CTRL.C: IN_CLK
+  CTRL.R: IN_RESET
+  CTRL.START: IN_START
+  CTRL.BUSY: OUT_BUSY
+  CTRL.READY: OUT_READY
+  RY.Y: OUT_Y30
+  RY.V: OUT_SYNC
+  RA.Q: A15
+  RB.Q: B15
+  RA.VALID: VALID_A
+  RM.M: M30
+  RQ.Q0: Q0
+  ACC.P: P30
+  SM_M.Q: SUM30
+  CNT.LAST: LAST
+  CTRL.SUB: SUB
+  CTRL.CAP: CAP
+  CTRL.INIT: INIT
+  CTRL.STEP: STEP
+  CTRL.EN_ACC: ACC_EN
+  CTRL.SAVE: SAVE
+  CTRL.COUT: CLK
+  CTRL.ROUT: RESET

@@ -1,0 +1,5 @@
+{
+  "name": "schematic-renderer-layout",
+  "private": true,
+  "dependencies": { "elkjs": "0.11.0" }
+}

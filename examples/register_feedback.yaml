@@ -1,0 +1,67 @@
+canvas:
+  scale: 3
+  margin: 46
+  column_gap: 180
+  row_gap: 86
+
+blocks:
+  RG1:
+    symbol: RG
+    label: "15"
+    position: [1, 1]
+    inputs:
+      - {name: D, label: "D[0:14]"}
+      - {name: C, label: C, marker: clock}
+      - {name: WE, label: WR}
+    outputs:
+      - {name: Q, label: "Q[0:14]"}
+  SM1:
+    symbol: SM
+    label: "+1"
+    position: [2, 1]
+    inputs:
+      - A
+      - B
+      - {name: FB, label: FB, side: top}
+    outputs: [S, COUT]
+  RG2:
+    symbol: RG
+    label: "15"
+    position: [3, 1]
+    inputs:
+      - {name: D, label: "D[0:14]"}
+      - {name: C, label: C, marker: clock}
+      - {name: WE, label: WR}
+    outputs:
+      - {name: Q, label: "Q[0:14]"}
+
+ports:
+  DIN:
+    label: Данные
+    direction: input
+    position: [0, 1]
+  CLK:
+    label: Такт
+    direction: input
+    position: [0, 0]
+  WR:
+    label: Запись
+    direction: input
+    position: [0, 3]
+  ONE:
+    label: "1"
+    direction: input
+    position: [1, 3]
+  DOUT:
+    label: Результат
+    direction: output
+    position: [4, 1]
+
+connections:
+  - "DIN -> RG1.D"
+  - "RG1.Q -> SM1.A"
+  - "SM1.S -> RG2.D"
+  - "RG2.Q -> DOUT"
+  - "CLK -> RG1.C"
+  - "WR -> RG1.WE"
+  - "WR -> RG2.WE"

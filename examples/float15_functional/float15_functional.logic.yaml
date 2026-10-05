@@ -1,0 +1,343 @@
+# Functional, sequential floating-point multiplier. No Python changes required.
+# Renderer-native keys: canvas, blocks, connections, net_names, primitives.
+# design and per-block contract/widths are explanatory metadata, not HDL.
+design:
+  name: Signed floating-point 15-bit sequential multiplier
+  encoding: "X = (-1)^X[9] * (unsigned(X[8:0])/512) * 2^signed(X[14:10])"
+  input_requirement: "Any 9-bit fraction including zero; no implicit leading bit. E is two's complement."
+  output_encoding: Same 15-bit format as inputs; fraction truncated toward zero.
+  arithmetic: "P=FA*FB; S=SA xor SB; K=clz18(P); F=(P<<K)>>9; E=EA+EB-K. For P=0 use K=0."
+  exceptional_result: "P=0: Y=0, ERR=0. Nonzero P with E outside [-16,15]: Y=0, ERR=1."
+  sync: "SYNC is a separate validity bit, captured with A. OUT_SYNC copies it even when ERR=1."
+  clock: "All sequential blocks use rising CLK. Synchronous active-high RESET has highest priority. No gated clocks."
+  external_inputs: [RA.A, RA.V, RB.B, CTRL.C, CTRL.R, CTRL.START]
+  external_outputs: [CTRL.BUSY, CTRL.READY, RY.Y, RY.ERR, RY.V]
+  external_arrows: "Point away from the circuit as requested, including inputs. IN_/OUT_ identifies logical direction."
+  internal_arrows: "Source and sink arrows point in data-flow direction. Repeated names are one electrical net, not independent signals."
+  states:
+    IDLE: "If START=1: CAP=1, capture A/B/SYNC at this edge; next INIT. Otherwise stay."
+    INIT: "INIT=1: RM=zero_extend(FA), RQ=FB, ACC=0, CNT=9; next RUN."
+    RUN: "STEP=1; ADD=Q0. At edge ACC+=RM if Q0, RM<<=1, RQ>>=1, CNT-=1. If LAST before edge, next WRITE; else RUN."
+    WRITE: "SAVE=1: capture formatted product, range error and saved SYNC in RY; next DONE."
+    DONE: "READY=1. Hold until START=0, then IDLE. START during computation is ignored."
+  controller_outputs:
+    CAP: "state=IDLE and START"
+    INIT: "state=INIT"
+    STEP: "state=RUN"
+    ADD: "state=RUN and Q0"
+    SAVE: "state=WRITE"
+    BUSY: "state in {INIT,RUN,WRITE}"
+    READY: "state=DONE"
+    CLK: "Combinational copy of external IN_CLK, not a generated clock"
+    RESET: "Combinational copy of external IN_RESET"
+  latency: "Accepted at edge n; initialization n+1; nine additions/shifts n+2..n+10; result and READY at n+11."
+
+canvas:
+  layout: grid
+  wiring: named
+  scale: 2
+  margin: 70
+  font_size: 20
+  small_font_size: 16
+  line_width: 2
+  pin_length: 24
+  pin_gap: 30
+  block_padding_y: 24
+  min_block_width: 230
+  min_block_height: 108
+  column_gap: 70
+  row_gap: 70
+
+blocks:
+  RA:
+    symbol: RG
+    label: "15 + VALID"
+    position: [0, 0]
+    contract: "Reset all bits to zero; on LD capture A and V. Split A into F=A[8:0], S=A[9], E=A[14:10]. Hold otherwise."
+    widths: {A: 15, V: 1, LD: 1, C: 1, R: 1, F: 9, S: 1, E: 5, VALID: 1}
+    inputs:
+      - {name: A, label: "A:15"}
+      - {name: V, label: VALID}
+      - {name: LD, label: LD}
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: F, label: "F:9"}
+      - {name: S, label: S}
+      - {name: E, label: "E:s5"}
+      - {name: VALID, label: VALID}
+  RB:
+    symbol: RG
+    label: "15 bit"
+    position: [0, 1]
+    contract: "Reset to zero; on LD capture B. Split B into F=B[8:0], S=B[9], E=B[14:10]. Hold otherwise."
+    widths: {B: 15, LD: 1, C: 1, R: 1, F: 9, S: 1, E: 5}
+    inputs:
+      - {name: B, label: "B:15"}
+      - LD
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: F, label: "F:9"}
+      - {name: S, label: S}
+      - {name: E, label: "E:s5"}
+  CTRL:
+    symbol: FSM
+    label: "5 states"
+    position: [0, 2]
+    contract: "Synchronous five-state controller; see design.states. Reset -> IDLE. COUT=C and ROUT=R are clock/reset distribution only."
+    widths: {C: 1, R: 1, START: 1, LAST: 1, Q0: 1, CAP: 1, INIT: 1, STEP: 1, ADD: 1, SAVE: 1, COUT: 1, ROUT: 1, BUSY: 1, READY: 1}
+    inputs:
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+      - START
+      - LAST
+      - Q0
+    outputs:
+      - CAP
+      - INIT
+      - STEP
+      - ADD
+      - SAVE
+      - {name: COUT, label: CLK}
+      - {name: ROUT, label: RST}
+      - {name: BUSY, label: BUSY, side: left, order: 5}
+      - {name: READY, label: READY, side: left, order: 6}
+  RM:
+    symbol: RG
+    label: "18 bit / <<1"
+    position: [1, 0]
+    contract: "Priority RESET > LD > SH > hold. LD: M=zero_extend(D9); SH: M=(M<<1) mod 2^18, zero fill."
+    widths: {D: 9, LD: 1, SH: 1, C: 1, R: 1, M: 18}
+    inputs:
+      - {name: D, label: "D:9"}
+      - LD
+      - SH
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: M, label: "M:18"}
+  RQ:
+    symbol: RG
+    label: "9 bit / >>1"
+    position: [1, 1]
+    contract: "Priority RESET > LD > SH > hold. LD: Q=D9; SH: Q=Q>>1, zero fill. Output Q0 is bit 0 of Q."
+    widths: {D: 9, LD: 1, SH: 1, C: 1, R: 1, Q0: 1}
+    inputs:
+      - {name: D, label: "D:9"}
+      - LD
+      - SH
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs: [Q0]
+  CNT:
+    symbol: CT
+    label: "4 bit / -1"
+    position: [1, 2]
+    contract: "Priority RESET > LD9 > DEC > hold. LD9: N=9; DEC: N=N-1. LAST=(N=1), combinational, sampled before the final RUN edge."
+    widths: {LD9: 1, DEC: 1, C: 1, R: 1, LAST: 1}
+    inputs:
+      - LD9
+      - DEC
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs: [LAST]
+  SM_M:
+    symbol: SM
+    label: "A+B / 18 bit"
+    position: [2, 0]
+    contract: "Combinational unsigned 18-bit addition, no carry-in. SUM=ACC+M modulo 2^18; selected additions never overflow for 9x9 inputs."
+    widths: {A: 18, B: 18, Q: 18}
+    inputs:
+      - {name: A, label: "A:18"}
+      - {name: B, label: "B:18"}
+    outputs:
+      - {name: Q, label: "Q:18"}
+  ACC:
+    symbol: RG
+    label: "18 bit"
+    position: [2, 1]
+    contract: "Priority RESET > CLR > EN > hold. CLR: P=0; EN: P=D. ADD enables write only for multiplier bit Q0=1."
+    widths: {D: 18, CLR: 1, EN: 1, C: 1, R: 1, P: 18}
+    inputs:
+      - {name: D, label: "D:18"}
+      - CLR
+      - EN
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: P, label: "P:18"}
+  SIGN:
+    symbol: XOR
+    label: "sign only"
+    position: [2, 2]
+    contract: "S=SA xor SB, one sign bit; not a gate-level expansion of arithmetic."
+    widths: {A: 1, B: 1, S: 1}
+    inputs: [A, B]
+    outputs: [S]
+  SM_E:
+    symbol: SM
+    label: "A+B / 7 bit"
+    position: [1, 3]
+    contract: "Sign-extend both 5-bit two's-complement inputs to 7 bits before addition. ES=EA+EB in [-32,30]."
+    widths: {A: 5, B: 5, Q: 7}
+    inputs:
+      - {name: A, label: "A:s5"}
+      - {name: B, label: "B:s5"}
+    outputs:
+      - {name: Q, label: "Q:s7"}
+  SM_N:
+    symbol: SM
+    label: "A-B / 7 bit"
+    position: [2, 3]
+    contract: "E=ES-zero_extend(K5); signed 7-bit subtraction. Full possible range [-49,30]."
+    widths: {A: 7, B: 5, Q: 7}
+    inputs:
+      - {name: A, label: "A:s7"}
+      - {name: B, label: "B:u5"}
+    outputs:
+      - {name: Q, label: "Q:s7"}
+  LZ:
+    symbol: CLZ
+    label: "18 bit"
+    position: [3, 0]
+    contract: "Z=(P=0). K=count leading zero bits in P18 when nonzero (0..17), otherwise K=0."
+    widths: {P: 18, K: 5, Z: 1}
+    inputs:
+      - {name: P, label: "P:18"}
+    outputs:
+      - {name: K, label: "K:5"}
+      - Z
+  NORM:
+    symbol: SH
+    label: "18 bit / <<K"
+    position: [3, 1]
+    contract: "Combinational logical left shift H=(P<<K) mod 2^18. Output F=H[17:9], 9 bits; discard H[8:0] (truncate toward zero)."
+    widths: {P: 18, K: 5, F: 9}
+    inputs:
+      - {name: P, label: "P:18"}
+      - {name: K, label: "K:5"}
+    outputs:
+      - {name: F, label: "H[17:9]"}
+  FORMAT:
+    symbol: MX / CMP
+    label: "pack 15 bit"
+    position: [3, 2]
+    contract: "ERR=(not Z) and (E < -16 or E > 15). Y=0 when Z or ERR, else concat(E[4:0],S,F[8:0]). Only range comparison, bit concatenation and zero-selection mux; no multiplication."
+    widths: {F: 9, S: 1, E: 7, Z: 1, Y: 15, ERR: 1}
+    inputs:
+      - {name: F, label: "F:9"}
+      - S
+      - {name: E, label: "E:s7"}
+      - Z
+    outputs:
+      - {name: Y, label: "Y:15"}
+      - ERR
+  RY:
+    symbol: RG
+    label: "15 + ERR + V"
+    position: [3, 3]
+    contract: "Reset all outputs to zero; on LD capture D15, DI and VI. Otherwise hold. Total 17 storage bits."
+    widths: {D: 15, DI: 1, VI: 1, LD: 1, C: 1, R: 1, Y: 15, ERR: 1, V: 1}
+    inputs:
+      - {name: D, label: "D:15"}
+      - {name: DI, label: ERR}
+      - {name: VI, label: VALID}
+      - LD
+      - {name: C, label: CLK, marker: clock}
+      - {name: R, label: RST}
+    outputs:
+      - {name: Y, label: "Y:15"}
+      - ERR
+      - {name: V, label: VALID}
+
+# Pairwise directed edges: every internal driver is an output pin.
+connections:
+  - RA.F -> RM.D
+  - RB.F -> RQ.D
+  - RA.S -> SIGN.A
+  - RB.S -> SIGN.B
+  - RA.E -> SM_E.A
+  - RB.E -> SM_E.B
+  - RA.VALID -> RY.VI
+  - RM.M -> SM_M.B
+  - ACC.P -> SM_M.A
+  - SM_M.Q -> ACC.D
+  - RQ.Q0 -> CTRL.Q0
+  - CNT.LAST -> CTRL.LAST
+  - ACC.P -> LZ.P
+  - ACC.P -> NORM.P
+  - LZ.K -> NORM.K
+  - LZ.K -> SM_N.B
+  - LZ.Z -> FORMAT.Z
+  - SM_E.Q -> SM_N.A
+  - SM_N.Q -> FORMAT.E
+  - SIGN.S -> FORMAT.S
+  - NORM.F -> FORMAT.F
+  - FORMAT.Y -> RY.D
+  - FORMAT.ERR -> RY.DI
+  - CTRL.CAP -> RA.LD
+  - CTRL.CAP -> RB.LD
+  - CTRL.INIT -> RM.LD
+  - CTRL.INIT -> RQ.LD
+  - CTRL.INIT -> ACC.CLR
+  - CTRL.INIT -> CNT.LD9
+  - CTRL.STEP -> RM.SH
+  - CTRL.STEP -> RQ.SH
+  - CTRL.STEP -> CNT.DEC
+  - CTRL.ADD -> ACC.EN
+  - CTRL.SAVE -> RY.LD
+  - CTRL.COUT -> RA.C
+  - CTRL.COUT -> RB.C
+  - CTRL.COUT -> RM.C
+  - CTRL.COUT -> RQ.C
+  - CTRL.COUT -> ACC.C
+  - CTRL.COUT -> CNT.C
+  - CTRL.COUT -> RY.C
+  - CTRL.ROUT -> RA.R
+  - CTRL.ROUT -> RB.R
+  - CTRL.ROUT -> RM.R
+  - CTRL.ROUT -> RQ.R
+  - CTRL.ROUT -> ACC.R
+  - CTRL.ROUT -> CNT.R
+  - CTRL.ROUT -> RY.R
+
+net_names:
+  RA.A: IN_A15
+  RA.V: IN_SYNC
+  RB.B: IN_B15
+  CTRL.C: IN_CLK
+  CTRL.R: IN_RESET
+  CTRL.START: IN_START
+  CTRL.BUSY: OUT_BUSY
+  CTRL.READY: OUT_READY
+  RY.Y: OUT_Y15
+  RY.ERR: OUT_RANGE_ERR
+  RY.V: OUT_SYNC
+  RA.F: FA9
+  RB.F: FB9
+  RA.S: SA
+  RB.S: SB
+  RA.E: EA5
+  RB.E: EB5
+  RA.VALID: VALID_A
+  RM.M: M18
+  RQ.Q0: Q0
+  ACC.P: P18
+  SM_M.Q: SUM18
+  CNT.LAST: LAST
+  SIGN.S: S
+  SM_E.Q: ES7
+  SM_N.Q: E7
+  LZ.K: K5
+  LZ.Z: ZERO
+  NORM.F: F9
+  FORMAT.Y: WORD15
+  FORMAT.ERR: RANGE_ERR
+  CTRL.CAP: CAP
+  CTRL.INIT: INIT
+  CTRL.STEP: STEP
+  CTRL.ADD: ADD
+  CTRL.SAVE: SAVE
+  CTRL.COUT: CLK
+  CTRL.ROUT: RESET

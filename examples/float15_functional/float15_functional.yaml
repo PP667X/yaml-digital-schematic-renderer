@@ -1,0 +1,1096 @@
+design:
+  name: Signed floating-point 15-bit sequential multiplier
+  encoding: X = (-1)^X[9] * (unsigned(X[8:0])/512) * 2^signed(X[14:10])
+  input_requirement: Any 9-bit fraction including zero; no implicit leading bit. E
+    is two's complement.
+  output_encoding: Same 15-bit format as inputs; fraction truncated toward zero.
+  arithmetic: P=FA*FB; S=SA xor SB; K=clz18(P); F=(P<<K)>>9; E=EA+EB-K. For P=0 use
+    K=0.
+  exceptional_result: 'P=0: Y=0, ERR=0. Nonzero P with E outside [-16,15]: Y=0, ERR=1.'
+  sync: SYNC is a separate validity bit, captured with A. OUT_SYNC copies it even
+    when ERR=1.
+  clock: All sequential blocks use rising CLK. Synchronous active-high RESET has highest
+    priority. No gated clocks.
+  external_inputs:
+  - RA.A
+  - RA.V
+  - RB.B
+  - CTRL.C
+  - CTRL.R
+  - CTRL.START
+  external_outputs:
+  - CTRL.BUSY
+  - CTRL.READY
+  - RY.Y
+  - RY.ERR
+  - RY.V
+  external_arrows: Point away from the circuit as requested, including inputs. IN_/OUT_
+    identifies logical direction.
+  internal_wiring: All 48 connections are continuous wires. Dots are junctions; bridge
+    crossings are not connected. No internal named breaks.
+  states:
+    IDLE: 'If START=1: CAP=1, capture A/B/SYNC at this edge; next INIT. Otherwise
+      stay.'
+    INIT: 'INIT=1: RM=zero_extend(FA), RQ=FB, ACC=0, CNT=9; next RUN.'
+    RUN: STEP=1; ADD=Q0. At edge ACC+=RM if Q0, RM<<=1, RQ>>=1, CNT-=1. If LAST before
+      edge, next WRITE; else RUN.
+    WRITE: 'SAVE=1: capture formatted product, range error and saved SYNC in RY; next
+      DONE.'
+    DONE: READY=1. Hold until START=0, then IDLE. START during computation is ignored.
+  controller_outputs:
+    CAP: state=IDLE and START
+    INIT: state=INIT
+    STEP: state=RUN
+    ADD: state=RUN and Q0
+    SAVE: state=WRITE
+    BUSY: state in {INIT,RUN,WRITE}
+    READY: state=DONE
+    CLK: Combinational copy of external IN_CLK, not a generated clock
+    RESET: Combinational copy of external IN_RESET
+  latency: Accepted at edge n; initialization n+1; nine additions/shifts n+2..n+10;
+    result and READY at n+11.
+canvas:
+  layout: absolute
+  wiring: connected
+  scale: 2
+  margin: 70
+  font_size: 20
+  small_font_size: 16
+  line_width: 2
+  pin_length: 24
+  pin_gap: 30
+  block_padding_y: 24
+  min_block_width: 230
+  min_block_height: 108
+  column_gap: 70
+  row_gap: 70
+blocks:
+  RA:
+    symbol: RG
+    label: 15 + VALID
+    position:
+    - 136
+    - 120
+    contract: Reset all bits to zero; on LD capture A and V. Split A into F=A[8:0],
+      S=A[9], E=A[14:10]. Hold otherwise.
+    widths:
+      A: 15
+      V: 1
+      LD: 1
+      C: 1
+      R: 1
+      F: 9
+      S: 1
+      E: 5
+      VALID: 1
+    inputs:
+    - name: A
+      label: IN_A15
+    - name: V
+      label: IN_SYNC
+    - name: LD
+      label: LD
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - name: F
+      label: F:9
+    - name: S
+      label: S
+    - name: E
+      label: E:s5
+    - name: VALID
+      label: VALID
+  RB:
+    symbol: RG
+    label: 15 bit
+    position:
+    - 136
+    - 464
+    contract: Reset to zero; on LD capture B. Split B into F=B[8:0], S=B[9], E=B[14:10].
+      Hold otherwise.
+    widths:
+      B: 15
+      LD: 1
+      C: 1
+      R: 1
+      F: 9
+      S: 1
+      E: 5
+    inputs:
+    - name: B
+      label: IN_B15
+    - LD
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - name: F
+      label: F:9
+    - name: S
+      label: S
+    - name: E
+      label: E:s5
+  CTRL:
+    symbol: FSM
+    label: 5 states
+    position:
+    - 593
+    - 500
+    contract: Synchronous five-state controller; see design.states. Reset -> IDLE.
+      COUT=C and ROUT=R are clock/reset distribution only.
+    widths:
+      C: 1
+      R: 1
+      START: 1
+      LAST: 1
+      Q0: 1
+      CAP: 1
+      INIT: 1
+      STEP: 1
+      ADD: 1
+      SAVE: 1
+      COUT: 1
+      ROUT: 1
+      BUSY: 1
+      READY: 1
+    inputs:
+    - name: C
+      label: IN_CLK
+      marker: clock
+    - name: R
+      label: IN_RESET
+    - name: START
+      label: IN_START
+    - LAST
+    - Q0
+    outputs:
+    - CAP
+    - INIT
+    - STEP
+    - ADD
+    - SAVE
+    - name: COUT
+      label: CLK
+    - name: ROUT
+      label: RST
+    - name: BUSY
+      label: OUT_BUSY
+      side: left
+      order: 5
+    - name: READY
+      label: OUT_READY
+      side: left
+      order: 6
+  RM:
+    symbol: RG
+    label: 18 bit / <<1
+    position:
+    - 1068
+    - 500
+    contract: 'Priority RESET > LD > SH > hold. LD: M=zero_extend(D9); SH: M=(M<<1)
+      mod 2^18, zero fill.'
+    widths:
+      D: 9
+      LD: 1
+      SH: 1
+      C: 1
+      R: 1
+      M: 18
+    inputs:
+    - name: D
+      label: D:9
+    - LD
+    - SH
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - name: M
+      label: M:18
+  RQ:
+    symbol: RG
+    label: 9 bit / >>1
+    position:
+    - 1056
+    - 746
+    contract: 'Priority RESET > LD > SH > hold. LD: Q=D9; SH: Q=Q>>1, zero fill. Output
+      Q0 is bit 0 of Q.'
+    widths:
+      D: 9
+      LD: 1
+      SH: 1
+      C: 1
+      R: 1
+      Q0: 1
+    inputs:
+    - name: D
+      label: D:9
+    - LD
+    - SH
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - Q0
+  CNT:
+    symbol: CT
+    label: 4 bit / -1
+    position:
+    - 1044
+    - 992
+    contract: 'Priority RESET > LD9 > DEC > hold. LD9: N=9; DEC: N=N-1. LAST=(N=1),
+      combinational, sampled before the final RUN edge.'
+    widths:
+      LD9: 1
+      DEC: 1
+      C: 1
+      R: 1
+      LAST: 1
+    inputs:
+    - LD9
+    - DEC
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - LAST
+  SM_M:
+    symbol: SM
+    label: A+B / 18 bit
+    position:
+    - 1450
+    - 728
+    contract: Combinational unsigned 18-bit addition, no carry-in. SUM=ACC+M modulo
+      2^18; selected additions never overflow for 9x9 inputs.
+    widths:
+      A: 18
+      B: 18
+      Q: 18
+    inputs:
+    - name: A
+      label: A:18
+    - name: B
+      label: B:18
+    outputs:
+    - name: Q
+      label: Q:18
+  ACC:
+    symbol: RG
+    label: 18 bit
+    position:
+    - 1056
+    - 1216
+    contract: 'Priority RESET > CLR > EN > hold. CLR: P=0; EN: P=D. ADD enables write
+      only for multiplier bit Q0=1.'
+    widths:
+      D: 18
+      CLR: 1
+      EN: 1
+      C: 1
+      R: 1
+      P: 18
+    inputs:
+    - name: D
+      label: D:18
+    - CLR
+    - EN
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - name: P
+      label: P:18
+  SIGN:
+    symbol: XOR
+    label: sign only
+    position:
+    - 557
+    - 144
+    contract: S=SA xor SB, one sign bit; not a gate-level expansion of arithmetic.
+    widths:
+      A: 1
+      B: 1
+      S: 1
+    inputs:
+    - A
+    - B
+    outputs:
+    - S
+  SM_E:
+    symbol: SM
+    label: A+B / 7 bit
+    position:
+    - 569
+    - 300
+    contract: Sign-extend both 5-bit two's-complement inputs to 7 bits before addition.
+      ES=EA+EB in [-32,30].
+    widths:
+      A: 5
+      B: 5
+      Q: 7
+    inputs:
+    - name: A
+      label: A:s5
+    - name: B
+      label: B:s5
+    outputs:
+    - name: Q
+      label: Q:s7
+  SM_N:
+    symbol: SM
+    label: A-B / 7 bit
+    position:
+    - 1744
+    - 300
+    contract: E=ES-zero_extend(K5); signed 7-bit subtraction. Full possible range
+      [-49,30].
+    widths:
+      A: 7
+      B: 5
+      Q: 7
+    inputs:
+    - name: A
+      label: A:s7
+    - name: B
+      label: B:u5
+    outputs:
+    - name: Q
+      label: Q:s7
+  LZ:
+    symbol: CLZ
+    label: 18 bit
+    position:
+    - 1450
+    - 530
+    contract: Z=(P=0). K=count leading zero bits in P18 when nonzero (0..17), otherwise
+      K=0.
+    widths:
+      P: 18
+      K: 5
+      Z: 1
+    inputs:
+    - name: P
+      label: P:18
+    outputs:
+    - name: K
+      label: K:5
+    - Z
+  NORM:
+    symbol: SH
+    label: 18 bit / <<K
+    position:
+    - 1744
+    - 456
+    contract: Combinational logical left shift H=(P<<K) mod 2^18. Output F=H[17:9],
+      9 bits; discard H[8:0] (truncate toward zero).
+    widths:
+      P: 18
+      K: 5
+      F: 9
+    inputs:
+    - name: P
+      label: P:18
+    - name: K
+      label: K:5
+    outputs:
+    - name: F
+      label: H[17:9]
+  FORMAT:
+    symbol: MX / CMP
+    label: pack 15 bit
+    position:
+    - 2133
+    - 438
+    contract: ERR=(not Z) and (E < -16 or E > 15). Y=0 when Z or ERR, else concat(E[4:0],S,F[8:0]).
+      Only range comparison, bit concatenation and zero-selection mux; no multiplication.
+    widths:
+      F: 9
+      S: 1
+      E: 7
+      Z: 1
+      Y: 15
+      ERR: 1
+    inputs:
+    - name: F
+      label: F:9
+    - S
+    - name: E
+      label: E:s7
+    - Z
+    outputs:
+    - name: Y
+      label: Y:15
+    - ERR
+  RY:
+    symbol: RG
+    label: 15 + ERR + V
+    position:
+    - 2485
+    - 438
+    contract: Reset all outputs to zero; on LD capture D15, DI and VI. Otherwise hold.
+      Total 17 storage bits.
+    widths:
+      D: 15
+      DI: 1
+      VI: 1
+      LD: 1
+      C: 1
+      R: 1
+      Y: 15
+      ERR: 1
+      V: 1
+    inputs:
+    - name: D
+      label: D:15
+    - name: DI
+      label: ERR
+    - name: VI
+      label: VALID
+    - LD
+    - name: C
+      label: CLK
+      marker: clock
+    - name: R
+      label: RST
+    outputs:
+    - name: Y
+      label: OUT_Y15
+    - name: ERR
+      label: OUT_RANGE_ERR
+    - name: V
+      label: OUT_SYNC
+connections:
+- from: RA.F
+  to: RM.D
+  points:
+  - - 489
+    - 144
+  - - 501
+    - 144
+  - - 501
+    - 92
+  - - 1036
+    - 92
+  - - 1036
+    - 524
+  - - 1048
+    - 524
+- from: RB.F
+  to: RQ.D
+  points:
+  - - 403
+    - 488
+  - - 415
+    - 488
+  - - 415
+    - 436
+  - - 1024
+    - 436
+  - - 1024
+    - 770
+  - - 1036
+    - 770
+- from: RA.S
+  to: SIGN.A
+  points:
+  - - 489
+    - 174
+  - - 525
+    - 174
+  - - 525
+    - 168
+  - - 537
+    - 168
+- from: RB.S
+  to: SIGN.B
+  points:
+  - - 403
+    - 518
+  - - 525
+    - 518
+  - - 525
+    - 198
+  - - 537
+    - 198
+- from: RA.E
+  to: SM_E.A
+  points:
+  - - 489
+    - 204
+  - - 501
+    - 204
+  - - 501
+    - 324
+  - - 537
+    - 324
+- from: RB.E
+  to: SM_E.B
+  points:
+  - - 403
+    - 548
+  - - 537
+    - 548
+  - - 537
+    - 354
+  - - 549
+    - 354
+- from: RA.VALID
+  to: RY.VI
+  points:
+  - - 489
+    - 234
+  - - 513
+    - 234
+  - - 513
+    - 104
+  - - 2441
+    - 104
+  - - 2441
+    - 522
+  - - 2453
+    - 522
+- from: RM.M
+  to: SM_M.B
+  points:
+  - - 1370
+    - 524
+  - - 1394
+    - 524
+  - - 1394
+    - 782
+  - - 1430
+    - 782
+- from: ACC.P
+  to: SM_M.A
+  points:
+  - - 1306
+    - 1240
+  - - 1418
+    - 1240
+  - - 1418
+    - 752
+  - - 1430
+    - 752
+- from: SM_M.Q
+  to: ACC.D
+  points:
+  - - 1756
+    - 752
+  - - 1768
+    - 752
+  - - 1768
+    - 1176
+  - - 1024
+    - 1176
+  - - 1024
+    - 1240
+  - - 1036
+    - 1240
+- from: RQ.Q0
+  to: CTRL.Q0
+  points:
+  - - 1333
+    - 770
+  - - 1382
+    - 770
+  - - 1382
+    - 460
+  - - 561
+    - 460
+  - - 561
+    - 644
+  - - 573
+    - 644
+- from: CNT.LAST
+  to: CTRL.LAST
+  points:
+  - - 1326
+    - 1016
+  - - 1406
+    - 1016
+  - - 1406
+    - 448
+  - - 549
+    - 448
+  - - 549
+    - 614
+  - - 573
+    - 614
+- from: ACC.P
+  to: LZ.P
+  points:
+  - - 1306
+    - 1240
+  - - 1418
+    - 1240
+  - - 1418
+    - 554
+  - - 1430
+    - 554
+- from: ACC.P
+  to: NORM.P
+  points:
+  - - 1306
+    - 1240
+  - - 1418
+    - 1240
+  - - 1418
+    - 480
+  - - 1724
+    - 480
+- from: LZ.K
+  to: NORM.K
+  points:
+  - - 1700
+    - 554
+  - - 1712
+    - 554
+  - - 1712
+    - 510
+  - - 1724
+    - 510
+- from: LZ.K
+  to: SM_N.B
+  points:
+  - - 1700
+    - 554
+  - - 1712
+    - 554
+  - - 1712
+    - 354
+  - - 1724
+    - 354
+- from: LZ.Z
+  to: FORMAT.Z
+  points:
+  - - 1700
+    - 584
+  - - 2065
+    - 584
+  - - 2065
+    - 552
+  - - 2077
+    - 552
+- from: SM_E.Q
+  to: SM_N.A
+  points:
+  - - 862
+    - 324
+  - - 1048
+    - 324
+- from: SM_N.Q
+  to: FORMAT.E
+  points:
+  - - 2032
+    - 324
+  - - 2077
+    - 324
+  - - 2077
+    - 522
+  - - 2089
+    - 522
+- from: SIGN.S
+  to: FORMAT.S
+  points:
+  - - 807
+    - 168
+  - - 2101
+    - 168
+  - - 2101
+    - 492
+  - - 2113
+    - 492
+- from: NORM.F
+  to: FORMAT.F
+  points:
+  - - 2065
+    - 480
+  - - 2089
+    - 480
+  - - 2089
+    - 462
+  - - 2113
+    - 462
+- from: FORMAT.Y
+  to: RY.D
+  points:
+  - - 2429
+    - 462
+  - - 2453
+    - 462
+- from: FORMAT.ERR
+  to: RY.DI
+  points:
+  - - 2429
+    - 492
+  - - 2453
+    - 492
+- from: CTRL.CAP
+  to: RA.LD
+  points:
+  - - 940
+    - 524
+  - - 952
+    - 524
+  - - 952
+    - 424
+  - - 92
+    - 424
+  - - 92
+    - 204
+  - - 116
+    - 204
+- from: CTRL.CAP
+  to: RB.LD
+  points:
+  - - 940
+    - 524
+  - - 952
+    - 524
+  - - 952
+    - 424
+  - - 92
+    - 424
+  - - 92
+    - 518
+  - - 104
+    - 518
+- from: CTRL.INIT
+  to: RM.LD
+  points:
+  - - 940
+    - 554
+  - - 1036
+    - 554
+- from: CTRL.INIT
+  to: RQ.LD
+  points:
+  - - 940
+    - 554
+  - - 1012
+    - 554
+  - - 1012
+    - 800
+  - - 1024
+    - 800
+- from: CTRL.INIT
+  to: ACC.CLR
+  points:
+  - - 940
+    - 554
+  - - 1012
+    - 554
+  - - 1012
+    - 1270
+  - - 1024
+    - 1270
+- from: CTRL.INIT
+  to: CNT.LD9
+  points:
+  - - 940
+    - 554
+  - - 1012
+    - 554
+  - - 1012
+    - 1016
+  - - 1024
+    - 1016
+- from: CTRL.STEP
+  to: RM.SH
+  points:
+  - - 940
+    - 584
+  - - 1036
+    - 584
+- from: CTRL.STEP
+  to: RQ.SH
+  points:
+  - - 940
+    - 584
+  - - 1000
+    - 584
+  - - 1000
+    - 830
+  - - 1024
+    - 830
+- from: CTRL.STEP
+  to: CNT.DEC
+  points:
+  - - 940
+    - 584
+  - - 1000
+    - 584
+  - - 1000
+    - 1046
+  - - 1024
+    - 1046
+- from: CTRL.ADD
+  to: ACC.EN
+  points:
+  - - 940
+    - 614
+  - - 976
+    - 614
+  - - 976
+    - 1300
+  - - 1000
+    - 1300
+- from: CTRL.SAVE
+  to: RY.LD
+  points:
+  - - 940
+    - 644
+  - - 952
+    - 644
+  - - 952
+    - 1430
+  - - 2429
+    - 1430
+  - - 2429
+    - 552
+  - - 2441
+    - 552
+- from: CTRL.COUT
+  to: RA.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 80
+  - - 104
+    - 80
+  - - 104
+    - 234
+  - - 116
+    - 234
+- from: CTRL.COUT
+  to: RB.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 786
+  - - 92
+    - 786
+  - - 92
+    - 548
+  - - 104
+    - 548
+- from: CTRL.COUT
+  to: RM.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 614
+  - - 1036
+    - 614
+- from: CTRL.COUT
+  to: RQ.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 860
+  - - 1024
+    - 860
+- from: CTRL.COUT
+  to: ACC.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 1330
+  - - 1000
+    - 1330
+- from: CTRL.COUT
+  to: CNT.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 1076
+  - - 1024
+    - 1076
+- from: CTRL.COUT
+  to: RY.C
+  points:
+  - - 940
+    - 674
+  - - 988
+    - 674
+  - - 988
+    - 1442
+  - - 2441
+    - 1442
+  - - 2441
+    - 582
+  - - 2453
+    - 582
+- from: CTRL.ROUT
+  to: RA.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 774
+  - - 80
+    - 774
+  - - 80
+    - 264
+  - - 104
+    - 264
+- from: CTRL.ROUT
+  to: RB.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 798
+  - - 104
+    - 798
+  - - 104
+    - 578
+  - - 116
+    - 578
+- from: CTRL.ROUT
+  to: RM.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 644
+  - - 1036
+    - 644
+- from: CTRL.ROUT
+  to: RQ.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 890
+  - - 1024
+    - 890
+- from: CTRL.ROUT
+  to: ACC.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 1360
+  - - 1000
+    - 1360
+- from: CTRL.ROUT
+  to: CNT.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 1106
+  - - 1024
+    - 1106
+- from: CTRL.ROUT
+  to: RY.R
+  points:
+  - - 940
+    - 704
+  - - 964
+    - 704
+  - - 964
+    - 1454
+  - - 2453
+    - 1454
+  - - 2453
+    - 612
+  - - 2465
+    - 612
+net_names:
+  RA.A: IN_A15
+  RA.V: IN_SYNC
+  RB.B: IN_B15
+  CTRL.C: IN_CLK
+  CTRL.R: IN_RESET
+  CTRL.START: IN_START
+  CTRL.BUSY: OUT_BUSY
+  CTRL.READY: OUT_READY
+  RY.Y: OUT_Y15
+  RY.ERR: OUT_RANGE_ERR
+  RY.V: OUT_SYNC
+  RA.F: FA9
+  RB.F: FB9
+  RA.S: SA
+  RB.S: SB
+  RA.E: EA5
+  RB.E: EB5
+  RA.VALID: VALID_A
+  RM.M: M18
+  RQ.Q0: Q0
+  ACC.P: P18
+  SM_M.Q: SUM18
+  CNT.LAST: LAST
+  SIGN.S: S
+  SM_E.Q: ES7
+  SM_N.Q: E7
+  LZ.K: K5
+  LZ.Z: ZERO
+  NORM.F: F9
+  FORMAT.Y: WORD15
+  FORMAT.ERR: RANGE_ERR
+  CTRL.CAP: CAP
+  CTRL.INIT: INIT
+  CTRL.STEP: STEP
+  CTRL.ADD: ADD
+  CTRL.SAVE: SAVE
+  CTRL.COUT: CLK
+  CTRL.ROUT: RESET
+
+primitives:
+  - {type: polyline, terminal: RA.A, points: [[120, 139], [112, 144], [120, 149]], width: 2}
+  - {type: polyline, terminal: RA.V, points: [[120, 169], [112, 174], [120, 179]], width: 2}
+  - {type: polyline, terminal: RB.B, points: [[120, 483], [112, 488], [120, 493]], width: 2}
+  - {type: polyline, terminal: CTRL.C, points: [[577, 519], [569, 524], [577, 529]], width: 2}
+  - {type: polyline, terminal: CTRL.R, points: [[577, 549], [569, 554], [577, 559]], width: 2}
+  - {type: polyline, terminal: CTRL.START, points: [[577, 579], [569, 584], [577, 589]], width: 2}
+  - {type: polyline, terminal: CTRL.BUSY, points: [[577, 669], [569, 674], [577, 679]], width: 2}
+  - {type: polyline, terminal: CTRL.READY, points: [[577, 699], [569, 704], [577, 709]], width: 2}
+  - {type: polyline, terminal: RY.Y, points: [[2930, 457], [2938, 462], [2930, 467]], width: 2}
+  - {type: polyline, terminal: RY.ERR, points: [[2930, 487], [2938, 492], [2930, 497]], width: 2}
+  - {type: polyline, terminal: RY.V, points: [[2930, 517], [2938, 522], [2930, 527]], width: 2}

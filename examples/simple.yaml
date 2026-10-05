@@ -1,0 +1,35 @@
+canvas:
+  background: white
+  scale: 3
+  margin: 40
+
+blocks:
+  MX1:
+    symbol: MX
+    position: [1, 0]
+    inputs: [A, B, S]
+    outputs: [Q]
+
+ports:
+  IN1:
+    label: Вход A
+    direction: input
+    position: [0, 0]
+  IN2:
+    label: Вход B
+    direction: input
+    position: [0, 1]
+  SEL:
+    label: Выбор
+    direction: input
+    position: [0, 2]
+  OUT1:
+    label: Выход
+    direction: output
+    position: [2, 0]
+
+connections:
+  - "IN1 -> MX1.A"
+  - "IN2 -> MX1.B"
+  - "SEL -> MX1.S"
+  - "MX1.Q -> OUT1"

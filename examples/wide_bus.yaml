@@ -1,0 +1,96 @@
+canvas:
+  scale: 2
+  margin: 50
+  column_gap: 260
+  row_gap: 72
+  pin_gap: 22
+
+blocks:
+  RG_A:
+    symbol: RG
+    label: Регистр A
+    position: [1, 0]
+    inputs: ["D[0:14]"]
+    outputs: ["Q[0:14]"]
+    min_width: 150
+  XOR1:
+    symbol: XOR
+    position: [2, 0]
+    inputs: ["A[0:14]", "B[0:14]"]
+    outputs: ["Y[0:14]"]
+  MX1:
+    symbol: MX
+    position: [3, 0]
+    inputs: ["A[0:14]", "B[0:14]", SEL]
+    outputs: ["Q[0:14]"]
+  RG_B:
+    symbol: RG
+    label: Регистр B
+    position: [4, 0]
+    inputs: ["D[0:14]"]
+    outputs: ["Q[0:14]"]
+    min_width: 150
+
+ports:
+  BUS_IN:
+    label: Шина входа
+    direction: input
+    position: [0, 0]
+  SEL:
+    label: Выбор
+    direction: input
+    position: [2, 1]
+  BUS_OUT:
+    label: Шина выхода
+    direction: output
+    position: [5, 0]
+
+connections:
+  - "BUS_IN -> RG_A.D0"
+  - "RG_A.Q0 -> XOR1.A0"
+  - "RG_A.Q1 -> XOR1.A1"
+  - "RG_A.Q2 -> XOR1.A2"
+  - "RG_A.Q3 -> XOR1.A3"
+  - "RG_A.Q4 -> XOR1.A4"
+  - "RG_A.Q5 -> XOR1.A5"
+  - "RG_A.Q6 -> XOR1.A6"
+  - "RG_A.Q7 -> XOR1.A7"
+  - "RG_A.Q8 -> XOR1.A8"
+  - "RG_A.Q9 -> XOR1.A9"
+  - "RG_A.Q10 -> XOR1.A10"
+  - "RG_A.Q11 -> XOR1.A11"
+  - "RG_A.Q12 -> XOR1.A12"
+  - "RG_A.Q13 -> XOR1.A13"
+  - "RG_A.Q14 -> XOR1.A14"
+  - "XOR1.Y0 -> MX1.A0"
+  - "XOR1.Y1 -> MX1.A1"
+  - "XOR1.Y2 -> MX1.A2"
+  - "XOR1.Y3 -> MX1.A3"
+  - "XOR1.Y4 -> MX1.A4"
+  - "XOR1.Y5 -> MX1.A5"
+  - "XOR1.Y6 -> MX1.A6"
+  - "XOR1.Y7 -> MX1.A7"
+  - "XOR1.Y8 -> MX1.A8"
+  - "XOR1.Y9 -> MX1.A9"
+  - "XOR1.Y10 -> MX1.A10"
+  - "XOR1.Y11 -> MX1.A11"
+  - "XOR1.Y12 -> MX1.A12"
+  - "XOR1.Y13 -> MX1.A13"
+  - "XOR1.Y14 -> MX1.A14"
+  - "SEL -> MX1.SEL"
+  - "MX1.Q0 -> RG_B.D0"
+  - "MX1.Q1 -> RG_B.D1"
+  - "MX1.Q2 -> RG_B.D2"
+  - "MX1.Q3 -> RG_B.D3"
+  - "MX1.Q4 -> RG_B.D4"
+  - "MX1.Q5 -> RG_B.D5"
+  - "MX1.Q6 -> RG_B.D6"
+  - "MX1.Q7 -> RG_B.D7"
+  - "MX1.Q8 -> RG_B.D8"
+  - "MX1.Q9 -> RG_B.D9"
+  - "MX1.Q10 -> RG_B.D10"
+  - "MX1.Q11 -> RG_B.D11"
+  - "MX1.Q12 -> RG_B.D12"
+  - "MX1.Q13 -> RG_B.D13"
+  - "MX1.Q14 -> RG_B.D14"
+  - "RG_B.Q0 -> BUS_OUT"

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schematic-renderer"
+version = "0.1.0"
+description = "CLI renderer for simple digital-schematic block diagrams from YAML."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+  "Pillow>=10.0",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+layout = ["nodejs-wheel>=22"]
+
+[project.scripts]
+schematic-renderer = "schematic_renderer.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["schematic_renderer*"]
+
+[tool.setuptools.package-data]
+schematic_renderer = ["*.cjs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

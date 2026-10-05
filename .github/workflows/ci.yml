@@ -1,0 +1,36 @@
+name: Tests and package
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install in local environment, including layout
+        run: python install.py --dev --layout
+      - name: Tests
+        run: .venv/Scripts/python -m pytest -q
+      - name: Render published examples
+        run: |
+          .venv/Scripts/python -m schematic_renderer examples/float15_functional/float15_functional.yaml -o output/float15.png
+          .venv/Scripts/python -m schematic_renderer examples/fixed15_functional/fixed15_functional.yaml -o output/fixed15.png
+      - name: Build distributions
+        run: |
+          .venv/Scripts/python -m pip install build
+          .venv/Scripts/python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: examples-and-package-${{ matrix.python-version }}
+          path: |
+            output/*.png
+            dist/*
